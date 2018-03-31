@@ -1,0 +1,23 @@
+<module>
+	<rawname>rockrmsinterface</rawname>
+	<name>RockRMS Interface</name>
+	<version>1.0.0</version>
+	<publisher>Blue Box Moon</publisher>
+	<license>MIT</license>
+	<licenselink>https://opensource.org/licenses/MIT</licenselink>
+	<category>Admin</category>
+	<description>Provides an API interface for the Rock Relational Management System.</description>
+	<info>http://www.blueboxmoon.com</info>
+    <menuitems>
+      <rockrms_interface hidden="true" needsenginedb="yes">RockRMS Interface</rockrms_interface>
+    </menuitems>
+ 	<changelog>
+		1.0.0 Initial release.
+	</changelog>
+	<depends>
+		<module>core</module>
+	</depends>
+	<supported>
+		<version>13.0</version>
+	</supported>
+</module>
