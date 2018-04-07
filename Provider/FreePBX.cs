@@ -31,9 +31,10 @@ namespace com.blueboxmoon.FreePBX.Provider
     [TextField( "Password", "The password to connect with.", true, isPassword: true, order: 2 )]
     [IntegerField( "Minimum Duration", "The minimum duration in seconds a call must be in order to be imported.", true, 10, order: 3 )]
     [CodeEditorField( "Phone Extension Template", "Lava template to use to get the extension from the internal phone. This helps translate the full phone number to just the internal extension (e.g. (602) 555-2345 to 2345). The phone number will be passed into the template as the variable 'PhoneNumber'.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, false, "{{ PhoneNumber | Right:4 }}", order: 4 )]
-    [CodeEditorField( "Origination Rules Template", "Lava template that will be applied to both the source and destination number when originating a call. Lava variables include {{ PhoneNumber }}.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 400, false, "{{ PhoneNumber }}", order: 5 )]
-    [CodeEditorField( "Caller Id Template", "Lava template that will be used to generate the caller Id.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, true, "{{ CallerId }}", order: 6 )]
-    [TextField( "Origination URL", "Enter a URL here to use a custom origination URL. If blank then the default origination system will be used. <span class='tip tip-lava'></span>", false, "", order: 7 )]
+    [CodeEditorField( "Phone Number Template", "Lava template to use to get the phone number from a call record. Use this to make sure a full phone number is in the format that Rock expects (e.g. 10 digits). The phone number will be passed into the template as the variable 'PhoneNumber'.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, false, "{{ PhoneNumber | Right:10 }}", order: 5 )]
+    [CodeEditorField( "Origination Rules Template", "Lava template that will be applied to both the source and destination number when originating a call. Lava variables include {{ PhoneNumber }}.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, false, "{{ PhoneNumber }}", order: 6 )]
+    [CodeEditorField( "Caller Id Template", "Lava template that will be used to generate the caller Id.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, true, "{{ CallerId }}", order: 7 )]
+    [TextField( "Origination URL", "Enter a URL here to use a custom origination URL. If blank then the default origination system will be used. <span class='tip tip-lava'></span>", false, "", order: 8 )]
     public partial class FreePBX : PbxComponent
     {
         #region Base Method Overrides
@@ -124,128 +125,118 @@ namespace com.blueboxmoon.FreePBX.Provider
             {
                 startDateTime = new DateTime( 2000, 1, 1 );
             }
-            startDateTime = new DateTime( 2018, 3, 6 );
 
-            //
-            // Get our interaction type and the person alias type id.
-            //
-            var interactionComponentId = InteractionComponentCache.Read( SystemGuid.InteractionComponent.FREEPBX ).Id;
-            var personAliasTypeId = EntityTypeCache.Read( "Rock.Model.PersonAlias" ).Id;
-
-            //
-            // Get list of the current interaction foreign keys for the same
-            // timeframe to ensure we don't get duplicates.
-            //
-            List<string> currentInteractions;
-            using ( var rockContext = new RockContext() )
+            try
             {
-                var interactionStartDate = startDateTime.Value.Date;
-                currentInteractions = new InteractionService( rockContext ).Queryable()
-                    .Where( i => i.InteractionComponentId == interactionComponentId && i.InteractionDateTime >= interactionStartDate )
-                    .Select( i => i.ForeignKey ).ToList();
-            }
+                var personAliasPhoneCache = new Dictionary<string, int?>();
 
-            //
-            // Get our internal extensions.
-            //
-            var extensionList = GetInternalExtensions();
+                //
+                // Get our interaction type and the person alias type id.
+                //
+                var interactionComponentId = InteractionComponentCache.Read( SystemGuid.InteractionComponent.FREEPBX ).Id;
+                var personAliasTypeId = EntityTypeCache.Read( "Rock.Model.PersonAlias" ).Id;
 
-            //
-            // Loop through and get call records until we run out of data.
-            //
-            int processedRecords = 0;
-            for (int pageNumber = 1; ; pageNumber++ )
-            {
-                var records = GetCdrRecords( pageNumber, startDateTime.Value );
-                if ( records.Count == 0 )
+                //
+                // Get list of the current interaction foreign keys for the same
+                // timeframe to ensure we don't get duplicates.
+                //
+                List<string> currentInteractions;
+                using ( var rockContext = new RockContext() )
                 {
-                    break;
+                    var interactionStartDate = startDateTime.Value.Date;
+                    currentInteractions = new InteractionService( rockContext ).Queryable()
+                        .Where( i => i.InteractionComponentId == interactionComponentId && i.InteractionDateTime >= interactionStartDate )
+                        .Select( i => i.ForeignKey ).ToList();
                 }
 
                 //
-                // Loop through each record and process it.
+                // Get our internal extensions.
                 //
-                foreach ( var record in records )
+                var extensionList = GetInternalExtensions();
+
+                //
+                // Loop through and get call records until we run out of data.
+                //
+                int importedRecords = 0;
+                for ( int pageNumber = 1; ; pageNumber++ )
                 {
-                    //
-                    // Skip any records that we already know of or are not long enough.
-                    //
-                    if ( currentInteractions.Contains( record.RecordKey ) || record.Duration < minimumDuration )
+                    var records = GetCdrRecords( pageNumber, startDateTime.Value );
+                    if ( records.Count == 0 )
                     {
-                        continue;
+                        break;
                     }
 
-                    using ( var rockContext = new RockContext() )
+                    //
+                    // Loop through each record and process it.
+                    //
+                    foreach ( var record in records )
                     {
-                        var interactionService = new InteractionService( rockContext );
-                        var personService = new PersonService( rockContext );
-                        var interaction = new Interaction();
-
                         //
-                        // Try to find the source and destination persons. First try the extension
-                        // list and then, if the phone number is at least 5 digits, search the
-                        // database for a matching phone number.
+                        // Skip any records that we already know of or are not long enough.
                         //
-                        var sourcePerson = extensionList
-                            .Where( e => e.Number == record.Source || e.Extension == record.Source )
-                            .Select( e => e.PersonAlias.Person )
-                            .FirstOrDefault();
-
-                        var destinationPerson = extensionList
-                            .Where( e => e.Number == record.Destination || e.Extension == record.Destination )
-                            .Select( e => e.PersonAlias.Person )
-                            .FirstOrDefault();
-
-                        if ( sourcePerson == null && record.Source.Length > 4 )
+                        if ( currentInteractions.Contains( record.RecordKey ) || record.Duration < minimumDuration )
                         {
-                            sourcePerson = personService
-                                .GetByPhonePartial( record.Source )
-                                .FirstOrDefault();
+                            continue;
                         }
 
-                        if ( destinationPerson == null && record.Destination.Length > 4 )
+                        using ( var rockContext = new RockContext() )
                         {
-                            destinationPerson = personService
-                                .GetByPhonePartial( record.Destination )
-                                .FirstOrDefault();
-                        }
+                            var interactionService = new InteractionService( rockContext );
+                            var personService = new PersonService( rockContext );
+                            var interaction = new Interaction();
 
-                        interaction.Operation = record.Direction.ToString();
-                        interaction.InteractionData = record.ToJson();
-                        interaction.InteractionComponentId = interactionComponentId;
-                        interaction.RelatedEntityTypeId = personAliasTypeId;
-                        interaction.ForeignKey = record.RecordKey;
-                        interaction.InteractionDateTime = record.StartDateTime.Value;
+                            //
+                            // Try to find the source and destination persons. First try the extension
+                            // list and then search the database for a matching phone number.
+                            //
+                            var sourcePersonAliasId = GetPersonAliasIdForPhone( record.Source, personService, extensionList, personAliasPhoneCache );
+                            var destinationPersonAliasId = GetPersonAliasIdForPhone( record.Destination, personService, extensionList, personAliasPhoneCache );
 
-                        //
-                        // Try to ensure the Person is always the non-staff member.
-                        //
-                        if ( record.Direction == CdrDirection.Incoming )
-                        {
-                            interaction.PersonAliasId = sourcePerson?.PrimaryAliasId;
-                            interaction.EntityId = destinationPerson?.PrimaryAliasId;
-                        }
-                        else
-                        {
-                            interaction.PersonAliasId = destinationPerson?.PrimaryAliasId;
-                            interaction.EntityId = sourcePerson?.PrimaryAliasId;
-                        }
+                            //
+                            // Try to ensure the Person is always the non-staff member.
+                            //
+                            if ( record.Direction == CdrDirection.Incoming )
+                            {
+                                interaction.PersonAliasId = sourcePersonAliasId;
+                                interaction.EntityId = destinationPersonAliasId;
+                            }
+                            else
+                            {
+                                interaction.PersonAliasId = destinationPersonAliasId;
+                                interaction.EntityId = sourcePersonAliasId;
+                            }
 
-                        //
-                        // Only save it if we actually found a person.
-                        //
-                        if ( interaction.PersonAliasId.HasValue )
-                        {
-                            interactionService.Add( interaction );
-                            rockContext.SaveChanges();
+                            //
+                            // Only save it if we actually found a person.
+                            //
+                            if ( interaction.PersonAliasId.HasValue )
+                            {
+                                interaction.Operation = record.Direction.ToString();
+                                interaction.InteractionData = record.ToJson();
+                                interaction.InteractionComponentId = interactionComponentId;
+                                interaction.RelatedEntityTypeId = personAliasTypeId;
+                                interaction.ForeignKey = record.RecordKey;
+                                interaction.InteractionDateTime = record.StartDateTime.Value;
 
-                            processedRecords++;
+                                interactionService.Add( interaction );
+                                rockContext.SaveChanges();
+
+                                importedRecords++;
+                            }
                         }
                     }
                 }
-            }
 
-            throw new Exception( string.Format( "Downloaded {0} records", processedRecords ) );
+                downloadSuccessful = true;
+                return string.Format( "FreePBX: Imported {0} records.", importedRecords );
+            }
+            catch ( Exception ex )
+            {
+                ExceptionLogService.LogException( ex );
+
+                downloadSuccessful = false;
+                return string.Format( "FreePBX: Experienced an error: {0}.", ex.Message );
+            }
         }
 
         #endregion
@@ -264,6 +255,12 @@ namespace com.blueboxmoon.FreePBX.Provider
         {
             ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
             var client = new RestClient( GetAttributeValue( "ServerURL" ) );
+
+            //
+            // Prepare the phone number template.
+            //
+            var phoneNumberTemplate = GetAttributeValue( "PhoneNumberTemplate" );
+            var phoneNumberMergeFields = new Dictionary<string, object>();
 
             var request = new RestRequest( "admin/api/rockrmsinterface/getCelData" );
             request.AddParameter( "username", GetAttributeValue( "Username" ) );
@@ -299,9 +296,15 @@ namespace com.blueboxmoon.FreePBX.Provider
                         break;
                 }
 
-                record.Source = call.src;
+                //
+                // Translate the source and destination phone numbers.
+                //
+                phoneNumberMergeFields.AddOrReplace( "PhoneNumber", call.src.AsNumeric() );
+                record.Source = phoneNumberTemplate.ResolveMergeFields( phoneNumberMergeFields, null ).Trim();
+                phoneNumberMergeFields.AddOrReplace( "PhoneNumber", call.dst.AsNumeric() );
+                record.Destination = phoneNumberTemplate.ResolveMergeFields( phoneNumberMergeFields, null ).Trim();
+
                 record.CallerId = call.src_name;
-                record.Destination = call.dst;
                 record.StartDateTime = call.starttime.AsDateTime();
                 record.EndDateTime = call.endtime.AsDateTime();
                 record.Duration = call.duration;
@@ -421,6 +424,44 @@ namespace com.blueboxmoon.FreePBX.Provider
             }
 
             return extensionList;
+        }
+
+        /// <summary>
+        /// Get the Person Alias Id for the given phone number.
+        /// </summary>
+        /// <param name="phoneNumber">The phone number to be found.</param>
+        /// <param name="personService">The person service to search with.</param>
+        /// <param name="extensionList">The internal extension list to check first.</param>
+        /// <param name="personAliasPhoneCache">The cache to use for speeding things up.</param>
+        /// <returns></returns>
+        private int? GetPersonAliasIdForPhone( string phoneNumber, PersonService personService, List<ExtensionMap> extensionList, Dictionary<string, int?> personAliasPhoneCache )
+        {
+            if ( phoneNumber.Length > 0 )
+            {
+                if ( personAliasPhoneCache.ContainsKey( phoneNumber ) )
+                {
+                    return personAliasPhoneCache[phoneNumber];
+                }
+
+                var personAliasId = extensionList
+                    .Where( e => e.Number == phoneNumber || e.Extension == phoneNumber )
+                    .Select( e => e.PersonAlias.Id )
+                    .Cast<int?>()
+                    .FirstOrDefault();
+
+                if ( personAliasId == null && phoneNumber.Length > 4 )
+                {
+                    personAliasId = personService
+                        .GetByPhonePartial( phoneNumber )
+                        .FirstOrDefault()?.PrimaryAliasId;
+                }
+
+                personAliasPhoneCache.AddOrReplace( phoneNumber, personAliasId );
+
+                return personAliasId;
+            }
+
+            return null;
         }
 
         #endregion
