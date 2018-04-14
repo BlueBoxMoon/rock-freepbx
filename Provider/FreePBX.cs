@@ -59,9 +59,11 @@ namespace com.blueboxmoon.FreePBX.Provider
         /// <returns>True if the call was originated.</returns>
         public override bool Originate( Person fromPerson, string toPhone, string callerId, out string message )
         {
-            var internalPhoneType = this.GetAttributeValue( "InternalPhoneType" ).AsIntegerOrNull();
+            var phoneTypeId = PersonService.GetUserPreference( fromPerson, Rock.SystemKey.UserPreference.ORIGINATE_CALL_SOURCE ).AsIntegerOrNull();
 
-            if ( !internalPhoneType.HasValue )
+            phoneTypeId = phoneTypeId ?? this.GetAttributeValue( "InternalPhoneType" ).AsIntegerOrNull();
+
+            if ( !phoneTypeId.HasValue )
             {
                 message = "Could not determine the phone to use to originate this call.";
 
@@ -69,12 +71,12 @@ namespace com.blueboxmoon.FreePBX.Provider
             }
 
             var phoneNumber = new PhoneNumberService( new RockContext() ).Queryable()
-                .Where( p => p.PersonId == fromPerson.Id && p.NumberTypeValueId == internalPhoneType.Value )
+                .Where( p => p.PersonId == fromPerson.Id && p.NumberTypeValueId == phoneTypeId.Value )
                 .FirstOrDefault();
 
             if ( phoneNumber == null )
             {
-                var phoneType = DefinedValueCache.Read( internalPhoneType.Value );
+                var phoneType = DefinedValueCache.Read( phoneTypeId.Value );
 
                 message = string.Format( "There is no {0} phone number configured.", phoneType.Value.ToLower() );
 
