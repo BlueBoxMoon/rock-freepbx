@@ -30,11 +30,12 @@ namespace com.blueboxmoon.FreePBX.Provider
     [TextField( "Username", "The username to connect with.", true, order: 1 )]
     [TextField( "Password", "The password to connect with.", true, isPassword: true, order: 2 )]
     [IntegerField( "Minimum Duration", "The minimum duration in seconds a call must be in order to be imported.", true, 10, order: 3 )]
-    [CodeEditorField( "Phone Extension Template", "Lava template to use to get the extension from the internal phone. This helps translate the full phone number to just the internal extension (e.g. (602) 555-2345 to 2345). The phone number will be passed into the template as the variable 'PhoneNumber'.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, false, "{{ PhoneNumber | Right:4 }}", order: 4 )]
-    [CodeEditorField( "Phone Number Template", "Lava template to use to get the phone number from a call record. Use this to make sure a full phone number is in the format that Rock expects (e.g. 10 digits). The phone number will be passed into the template as the variable 'PhoneNumber'.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, false, "{{ PhoneNumber | Right:10 }}", order: 5 )]
-    [CodeEditorField( "Origination Rules Template", "Lava template that will be applied to both the source and destination number when originating a call. Lava variables include {{ PhoneNumber }}.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, false, "{{ PhoneNumber }}", order: 6 )]
-    [CodeEditorField( "Caller Id Template", "Lava template that will be used to generate the caller Id.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, true, "{{ CallerId }}", order: 7 )]
-    [TextField( "Origination URL", "Enter a URL here to use a custom origination URL. If blank then the default origination system will be used. <span class='tip tip-lava'></span>", false, "", order: 8 )]
+    [BooleanField( "Skip Internal Calls", "If set to Yes then a call that is determined to be an internal call (extension to extension) will not be imported.", false, order: 4 )]
+    [CodeEditorField( "Phone Extension Template", "Lava template to use to get the extension from the internal phone. This helps translate the full phone number to just the internal extension (e.g. (602) 555-2345 to 2345). The phone number will be passed into the template as the variable 'PhoneNumber'.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, false, "{{ PhoneNumber | Right:4 }}", order: 5 )]
+    [CodeEditorField( "Phone Number Template", "Lava template to use to get the phone number from a call record. Use this to make sure a full phone number is in the format that Rock expects (e.g. 10 digits). The phone number will be passed into the template as the variable 'PhoneNumber'.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, false, "{{ PhoneNumber | Right:10 }}", order: 6 )]
+    [CodeEditorField( "Origination Rules Template", "Lava template that will be applied to both the source and destination number when originating a call. Lava variables include {{ PhoneNumber }}.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, false, "{{ PhoneNumber }}", order: 7 )]
+    [CodeEditorField( "Caller Id Template", "Lava template that will be used to generate the caller Id.", Rock.Web.UI.Controls.CodeEditorMode.Lava, Rock.Web.UI.Controls.CodeEditorTheme.Rock, 200, true, "{{ CallerId }}", order: 8 )]
+    [TextField( "Origination URL", "Enter a URL here to use a custom origination URL. If blank then the default origination system will be used. <span class='tip tip-lava'></span>", false, "", order: 9 )]
     public partial class FreePBX : PbxComponent
     {
         #region Base Method Overrides
@@ -118,6 +119,7 @@ namespace com.blueboxmoon.FreePBX.Provider
         /// <returns></returns>
         public override string DownloadCdr( out bool downloadSuccessful, DateTime? startDateTime = null )
         {
+            bool skipInternalCalls = GetAttributeValue( "SkipInternalCalls" ).AsBoolean();
             int minimumDuration = GetAttributeValue( "MinimumDuration" ).AsIntegerOrNull() ?? 10;
 
             //
@@ -191,8 +193,20 @@ namespace com.blueboxmoon.FreePBX.Provider
                             // Try to find the source and destination persons. First try the extension
                             // list and then search the database for a matching phone number.
                             //
-                            var sourcePersonAliasId = GetPersonAliasIdForPhone( record.Source, personService, extensionList, personAliasPhoneCache );
-                            var destinationPersonAliasId = GetPersonAliasIdForPhone( record.Destination, personService, extensionList, personAliasPhoneCache );
+                            bool sourceInternal;
+                            bool destinationInternal;
+                            var sourcePersonAliasId = GetPersonAliasIdForPhone( record.Source, personService, extensionList, personAliasPhoneCache, out sourceInternal );
+                            var destinationPersonAliasId = GetPersonAliasIdForPhone( record.Destination, personService, extensionList, personAliasPhoneCache, out destinationInternal );
+
+                            //
+                            // Check if we are skipping internal calls.
+                            //
+                            bool skipSource = sourceInternal || !sourcePersonAliasId.HasValue;
+                            bool skipDestination = destinationInternal || !destinationPersonAliasId.HasValue;
+                            if ( skipInternalCalls && skipSource && skipDestination )
+                            {
+                                continue;
+                            }
 
                             //
                             // Try to ensure the Person is always the non-staff member.
@@ -436,23 +450,28 @@ namespace com.blueboxmoon.FreePBX.Provider
         /// <param name="personService">The person service to search with.</param>
         /// <param name="extensionList">The internal extension list to check first.</param>
         /// <param name="personAliasPhoneCache">The cache to use for speeding things up.</param>
-        /// <returns></returns>
-        private int? GetPersonAliasIdForPhone( string phoneNumber, PersonService personService, List<ExtensionMap> extensionList, Dictionary<string, int?> personAliasPhoneCache )
+        /// <param name="internalExtension">On return, set to true if the matched person is from the extensionList.</param>
+        /// <returns>A PersonAliasId that identifies the matched person, or null if no match found.</returns>
+        private int? GetPersonAliasIdForPhone( string phoneNumber, PersonService personService, List<ExtensionMap> extensionList, Dictionary<string, int?> personAliasPhoneCache, out bool internalExtension )
         {
+            internalExtension = false;
+
             if ( phoneNumber.Length > 0 )
             {
-                if ( personAliasPhoneCache.ContainsKey( phoneNumber ) )
-                {
-                    return personAliasPhoneCache[phoneNumber];
-                }
-
                 var personAliasId = extensionList
                     .Where( e => e.Number == phoneNumber || e.Extension == phoneNumber )
                     .Select( e => e.PersonAlias.Id )
                     .Cast<int?>()
                     .FirstOrDefault();
 
-                if ( personAliasId == null && phoneNumber.Length > 4 )
+                internalExtension = personAliasId.HasValue;
+
+                if ( !personAliasId.HasValue && personAliasPhoneCache.ContainsKey( phoneNumber ) )
+                {
+                    return personAliasPhoneCache[phoneNumber];
+                }
+
+                if ( !personAliasId.HasValue && phoneNumber.Length > 4 )
                 {
                     personAliasId = personService
                         .GetByPhonePartial( phoneNumber )
