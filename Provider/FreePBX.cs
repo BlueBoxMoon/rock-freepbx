@@ -327,6 +327,7 @@ namespace com.blueboxmoon.FreePBX.Provider
         /// <returns>True if the call was originated.</returns>
         public bool OriginateFreePBX( string fromPhone, string toPhone, string callerId, out string message )
         {
+            ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
             message = string.Empty;
 
             //
