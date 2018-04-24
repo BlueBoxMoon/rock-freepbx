@@ -2,6 +2,6 @@
   "Name": "FreePBX",
   "Organization": "Blue Box Moon",
   "Copy": [
-    { "Source": "Module/rockrmsinterface.zip", "Destination": "Plugins/com_blueboxmoon/FreePBX/Assets" }
+    { "Source": "Module/rockrmsinterface.zip", "Destination": "Plugins/com_blueboxmoon/FreePBX/Assets/rockrmsinterface.zip" }
   ]
 }
