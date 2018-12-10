@@ -77,7 +77,7 @@ namespace com.blueboxmoon.FreePBX.Provider
 
             if ( phoneNumber == null )
             {
-                var phoneType = DefinedValueCache.Read( phoneTypeId.Value );
+                var phoneType = DefinedValueCache.Get( phoneTypeId.Value );
 
                 message = string.Format( "There is no {0} phone number configured.", phoneType.Value.ToLower() );
 
@@ -137,8 +137,8 @@ namespace com.blueboxmoon.FreePBX.Provider
                 //
                 // Get our interaction type and the person alias type id.
                 //
-                var interactionComponentId = InteractionComponentCache.Read( SystemGuid.InteractionComponent.FREEPBX ).Id;
-                var personAliasTypeId = EntityTypeCache.Read( "Rock.Model.PersonAlias" ).Id;
+                var interactionComponentId = InteractionComponentCache.Get( SystemGuid.InteractionComponent.FREEPBX ).Id;
+                var personAliasTypeId = EntityTypeCache.Get( "Rock.Model.PersonAlias" ).Id;
 
                 //
                 // Get list of the current interaction foreign keys for the same
