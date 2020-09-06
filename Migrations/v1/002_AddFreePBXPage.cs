@@ -2,7 +2,7 @@
 
 namespace com.blueboxmoon.FreePBX.Migrations.v1
 {
-    [MigrationNumber( 2, "1.7.3" )]
+    [MigrationNumber( 2, "1.11.0" )]
     public class AddFreePBXPage : Migration
     {
         public override void Up()
